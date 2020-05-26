@@ -1,0 +1,87 @@
+```{r data prep}
+rm(list=ls())
+df <- read.csv("93.csv", dec = ',', sep = ';', header = F)
+
+# df <- df[df$V1>=quantile(df$V1, probs = 0.1) & df$V1<=quantile(df$V1, probs = 0.9)
+#           & df$V2>=quantile(df$V2, probs = 0.1) & df$V2<=quantile(df$V2, probs = 0.9),]
+
+I <- nrow(df)
+K <- ncol(df)
+
+averages <- apply(df, 1, mean)
+
+mu <- mean(averages)
+
+varx <- mean(apply(df, 1, var))
+vartheta <- sum((averages-mean(averages))^2)/(I-1)-varx/2
+
+```
+
+```{r nortest and graphs}
+library("nortest")
+ad.test(averages)
+
+
+tmp <- sort(averages)
+{hist(averages, freq = F)
+lines(density(averages))
+lines(tmp, dnorm(tmp, mu, sqrt(vartheta+varx/2)), col='blue')}
+
+{plot(tmp, 1:I/I, type='l', xlab = 'averages', ylab = 'Pr')
+lines(tmp, pnorm(tmp, mu, sqrt(vartheta+varx/2)), col='blue')}
+```
+
+```{r funs}
+criterion.min <- function(x, mu, sigma, n) 
+  (1-pnorm(x, mean = mu, sd = sigma))^n
+
+criterion.average <- function(x, mu, sigma, n) 
+  1-pnorm(x, mean = mu, sd = sigma/sqrt(n))
+
+criterion.reverse <- function(x, mu, sigma, n)
+  1-criterion(x, mu, sigma, n)
+
+interprob <- function(c, upperbound, lowerbound, criterion, n)
+  return (integrate(function(theta) 
+    criterion(c, theta, sqrt(varx), n)*dnorm(theta, mu, sqrt(vartheta)),
+     upper = upperbound, lower = lowerbound)$value)
+
+drisk1 <- function(c)
+  return (interprob(c, theta0, lowIntegr, criterion, n)/interprob(c, upIntegr, lowIntegr, criterion, n))
+
+drisk0 <- function(c)
+  return (interprob(c, upIntegr, theta0, criterion.reverse, n)/interprob(c, upIntegr, lowIntegr, criterion.reverse, n))
+
+```
+
+```{r settings}
+theta0 <- 117
+# for computational sake, instead of Inf and -Inf
+upIntegr <- 150
+lowIntegr <- 100
+# bound for drisk1
+alpha <- 0.0001 
+# bound for drisk0
+beta <- 0.1
+criterion <- criterion.average
+n <- K
+c <- uniroot(function(x) drisk1(x)-alpha, c(100, 119), extendInt = 'yes', tol = 10^(-9))$root
+drisk0(c)
+```
+
+```{r finding the necessary number of observations}
+while (drisk0(c) > beta){
+  n <- n+1
+  c <- uniroot(function(x) drisk1(x)/alpha-drisk0(x)/beta, c(115, 130), extendInt = 'yes', tol = 10^(-9))$root
+  cat(drisk0(c),'\n')
+}
+
+{
+x <- seq(100, 130, .1)
+r1 <- sapply(x, function(x) drisk1(x)/alpha)
+r0 <- sapply(x, function(x) drisk0(x)/beta)
+plot(x, r1, type = 'l', col = 'blue')
+lines(x, r0, col = 'red')
+abline(h=1)
+}
+```
