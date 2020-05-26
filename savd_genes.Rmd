@@ -1,0 +1,127 @@
+---
+output:
+  html_document: default
+  pdf_document: default
+---
+```{r testing distribution of wilcoxon statistic} 
+
+# install.packages("ggplot2")
+# install.packages("DEoptim")
+#  install.packages("plotly")
+library(ggplot2)
+library(DEoptim)
+library(plotly)
+rm(list=ls())
+n1 <- 47
+n2 <- 30
+M <- 10000
+
+test <- function(k, null){
+  if (null){
+    x <- rexp(n1, 3)
+    y <- rexp(n2, 3)
+  } else {
+    x <- rbeta(n1, 3, 2)
+    y <- rbeta(n2, 5, 1)
+  }
+  w <- wilcox.test(x, y)$statistic
+  t <- (w-n1*n2/2)/sqrt(n1*n2*(n1+n2+1)/12)
+  return (t)
+}
+
+tnull <- sapply(1:M, function(x) test(x, T))
+talt <-  sapply(1:M, function(x) test(x, F))
+
+one <- qplot(sort(pvals), 1:10100/10100, geom = 'line', 
+      main = 'Distribution of T from H0 and N(0,1)', 
+      xlab = 'T', ylab = 'Pr') +
+  stat_function(fun=cdf, args = list(theta=o$optim$bestmem),color = 'blue')
+
+two <- qplot(sort(talt), 1:M/M, geom = 'line', 
+      main = paste(c('Distribution of T from H1 and N(', round(mean(talt), 1), ',', round(var(talt),1),')'), 
+                   collapse = ''),
+      xlab = 'T', ylab = 'Pr') +
+  stat_function(fun=pnorm, args = list(mean(talt), sd(talt)), color = 'blue')
+
+# ggplotly(one)
+# ggplotly(two)
+
+one
+two
+
+```
+
+```{r functions}
+
+f <- function(theta, x){
+  (1-theta[1]-theta[2])*dnorm(x, 0, 1)+theta[1]*dnorm(x, theta[3], theta[4])+
+    theta[2]*dnorm(x, theta[5], theta[6])
+}
+
+L <- function(theta, x){
+  if (theta[1]+theta[2]>1) return (Inf)
+  else return(-sum(log(f(theta, x))))
+}
+
+cdf <- function(theta, x){
+  (1-theta[1]-theta[2])*pnorm(x, 0, 1)+
+    theta[1]*pnorm(x, theta[3], theta[4])+
+    theta[2]*pnorm(x, theta[5], theta[6])
+}
+
+# h0: mu1 >= mu2
+drisk1 <- function(c, theta){
+  (pnorm(c, 0, 1)*(1-theta[1]-theta[2])+pnorm(c, theta[5], theta[6])*theta[2])/cdf(theta, c)
+}
+
+lhestim <- function(t){
+  # theta = (p_less, p_greater, m_less, s_less, m_greater, s_greater)
+  o <- DEoptim(L, x = t, c(0, 0, -20, 0, -20, 0), c(1, 1, 20, 5, 20, 5), 
+               control = DEoptim.control(itermax = 500, trace = F))$optim$bestmem
+  if (o[3] < o[5]){ theta <- o
+  } else {theta <- c(o[2], o[1], o[5], o[6], o[3], o[4])}
+  return (theta)
+}
+
+```
+
+```{r data}
+
+z <- read.csv2(file = "Zdorov1.csv", header = FALSE)
+b <- read.csv2(file = "Bolen1.csv", header = FALSE)
+data <- cbind(z, b)
+n1 <- ncol(z)
+n2 <- ncol(b)
+M <- nrow(data)
+alpha <- 0.1
+
+```
+
+```{r welch}
+t.welch <- apply(data, 1, function(x) t.test(x[1:n1], x[(n1+1):(n1+n2)])$statistic)
+theta.welch <- lhestim(t.welch)
+
+c.welch <- uniroot(function(x) drisk1(x, theta.welch)-alpha, c(-10, 10))$root
+# T < C 
+pvals.welch <- pnorm(t.welch)
+pvals_adj_welch <- p.adjust(pvals.welch, method = 'BH')
+
+cat("#(T <", round(c.welch, 2),")=", sum(t.welch < c.welch), '\n', 
+    "BH =", sum(pvals_adj_welch < alpha), '\n')
+```
+
+```{r wilcoxon} 
+m <- n1*n2/2
+s <- sqrt(n1*n2*(n1+n2+1)/12)
+t.wilc <- apply(data, 1, function(x) (wilcox.test(x[1:n1], x[(n1+1):(n1+n2)], exact = F)$statistic - m)/s)
+theta.wilc <- lhestim(t.wilc)
+
+c.wilc <- uniroot(function(x) drisk1(x, theta.wilc)-alpha, c(-10, 10))$root
+
+# T < C 
+pvals.wilc <- pnorm(t.wilc)
+pvals_adj_wilc <- p.adjust(pvals.wilc, method = 'BH')
+
+cat("#(T <", round(c.wilc, 2),")=", sum(t.wilc < c.wilc), '\n', 
+    "BH =", sum(pvals_adj_wilc < alpha), '\n')
+```
